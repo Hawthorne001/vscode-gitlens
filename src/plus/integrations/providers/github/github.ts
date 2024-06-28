@@ -87,13 +87,6 @@ author {
 }
 baseRefName
 baseRefOid
-baseRepository {
-	name
-	owner {
-		login
-	}
-	url
-}
 headRefName
 headRefOid
 headRepository {
@@ -112,6 +105,7 @@ repository {
 	owner {
 		login
 	}
+	url
 	viewerPermission
 }
 `;
@@ -126,37 +120,23 @@ assignees(first: 10) {
 	}
 }
 checksUrl
-commits(last: 1) {
-	nodes {
-		commit {
-			oid
-			statusCheckRollup {
-				state
-			}
-		}
-	}
-}
 deletions
 isDraft
-isReadByViewer
-latestReviews (first: 10) {
+mergeable
+mergedBy {
+	login
+}
+reviewDecision
+latestReviews(first: 10) {
 	nodes {
 		author {
 			login
-			avatarUrl
+			avatarUrl(size: $avatarSize)
 			url
 		}
 		state
 	}
 }
-mergeable
-mergedBy {
-	login
-}
-reactions(content: THUMBS_UP) {
-	totalCount
-}
-reviewDecision
 reviewRequests(first: 10) {
 	nodes {
 		asCodeOwner
@@ -164,11 +144,14 @@ reviewRequests(first: 10) {
 		requestedReviewer {
 			... on User {
 				login
-				avatarUrl
+				avatarUrl(size: $avatarSize)
 				url
 			}
 		}
 	}
+}
+statusCheckRollup {
+	state
 }
 totalCommentsCount
 viewerCanUpdate
@@ -180,7 +163,7 @@ assignees(first: 100) {
 	nodes {
 		login
 		url
-		avatarUrl
+		avatarUrl(size: $avatarSize)
 	}
 }
 author {
@@ -2883,9 +2866,20 @@ export class GitHubApi implements Disposable {
 				search += ` user:${options.user}`;
 			}
 
-			if (options?.repos != null && options.repos.length > 0) {
-				const repo = '  repo:';
-				search += `${repo}${options.repos.join(repo)}`;
+			if (options?.repos?.length) {
+				search += ` repo:${options.repos.join(' repo:')}`;
+			}
+
+			// Hack for now, ultimately this should be passed in
+			const ignoredRepos = configuration.get('launchpad.ignoredRepositories') ?? [];
+			if (ignoredRepos.length) {
+				search += ` -repo:${ignoredRepos.join(' -repo:')}`;
+			}
+
+			// Hack for now, ultimately this should be passed in
+			const ignoredOrgs = configuration.get('launchpad.ignoredOrganizations') ?? [];
+			if (ignoredOrgs.length) {
+				search += ` -org:${ignoredOrgs.join(' -org:')}`;
 			}
 
 			const rsp = await this.graphql<SearchResult>(
@@ -2893,7 +2887,7 @@ export class GitHubApi implements Disposable {
 				token,
 				query,
 				{
-					search: `${search} is:pr is:open archived:false involves:@me`.trim(),
+					search: `is:open is:pr involves:@me archived:false ${search}`.trim(),
 					baseUrl: options?.baseUrl,
 					avatarSize: options?.avatarSize,
 				},
@@ -2936,7 +2930,7 @@ export class GitHubApi implements Disposable {
 	async searchMyIssues(
 		provider: Provider,
 		token: string,
-		options?: { search?: string; user?: string; repos?: string[]; baseUrl?: string },
+		options?: { search?: string; user?: string; repos?: string[]; baseUrl?: string; avatarSize?: number },
 		cancellation?: CancellationToken,
 	): Promise<SearchedIssue[] | undefined> {
 		const scope = getLogScope();
@@ -2957,6 +2951,7 @@ export class GitHubApi implements Disposable {
 				$authored: String!
 				$assigned: String!
 				$mentioned: String!
+				$avatarSize: Int
 			) {
 				authored: search(first: 100, query: $authored, type: ISSUE) {
 					nodes {
@@ -3003,6 +2998,7 @@ export class GitHubApi implements Disposable {
 					assigned: `${search} ${baseFilters} assignee:@me`.trim(),
 					mentioned: `${search} ${baseFilters} mentions:@me`.trim(),
 					baseUrl: options?.baseUrl,
+					avatarSize: options?.avatarSize,
 				},
 				scope,
 				cancellation,
